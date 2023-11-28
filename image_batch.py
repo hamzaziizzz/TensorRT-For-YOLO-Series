@@ -27,9 +27,9 @@ class ImageBatcher:
     Creates batches of pre-processed images.
     """
 
-    def __init__(self, input, shape, dtype, max_num_images=None, exact_batches=False, preprocessor="fixed_shape_resizer"):
+    def __init__(self, directory_input, shape, dtype, max_num_images=None, exact_batches=False, preprocessor="fixed_shape_resizer"):
         """
-        :param input: The input directory to read images from.
+        :param directory_input: The input directory to read images from.
         :param shape: The tensor shape of the batch to prepare, either in NCHW or NHWC format.
         :param dtype: The (numpy) datatype to cast the batched data to.
         :param max_num_images: The maximum number of images to read from the directory.
@@ -39,7 +39,7 @@ class ImageBatcher:
         :param preprocessor: Set the preprocessor to use, depending on which network is being used.
         """
         # Find images in the given input path
-        input = os.path.realpath(input)
+        directory_input = os.path.realpath(directory_input)
         self.images = []
 
         extensions = [".jpg", ".jpeg", ".png", ".bmp"]
@@ -47,15 +47,15 @@ class ImageBatcher:
         def is_image(path):
             return os.path.isfile(path) and os.path.splitext(path)[1].lower() in extensions
 
-        if os.path.isdir(input):
-            self.images = [os.path.join(input, f) for f in os.listdir(input) if is_image(os.path.join(input, f))]
+        if os.path.isdir(directory_input):
+            self.images = [os.path.join(directory_input, f) for f in os.listdir(directory_input) if is_image(os.path.join(directory_input, f))]
             self.images.sort()
-        elif os.path.isfile(input):
-            if is_image(input):
-                self.images.append(input)
+        elif os.path.isfile(directory_input):
+            if is_image(directory_input):
+                self.images.append(directory_input)
         self.num_images = len(self.images)
         if self.num_images < 1:
-            print("No valid {} images found in {}".format("/".join(extensions), input))
+            print("No valid {} images found in {}".format("/".join(extensions), directory_input))
             sys.exit(1)
 
         # Handle Tensor Shape
@@ -108,42 +108,41 @@ class ImageBatcher:
         This Image Batcher implements one algorithm for now:
         * Resizes and pads the image to fit the input size.
         :param image_path: The path to the image on disk to load.
-        :return: Two values: A numpy array holding the image sample, ready to be contacatenated into the rest of the
+        :return: Two values: A numpy array holding the image sample, ready to be concatenated into the rest of the
         batch, and the resize scale used, if any.
         """
 
-        def resize_pad(image, pad_color=(0, 0, 0)):
+        def resize_pad(img, pad_color=(0, 0, 0)):
             """
             A subroutine to implement padding and resizing. This will resize the image to fit fully within the input
             size, and pads the remaining bottom-right portions with the value provided.
-            :param image: The PIL image object
-            :pad_color: The RGB values to use for the padded area. Default: Black/Zeros.
+            :param img: The PIL image object
+            :param pad_color: The RGB values to use for the padded area. Default: Black/Zeros.
             :return: Two values: The PIL image object already padded and cropped, and the resize scale used.
             """
 
             # Get characteristics.
-            width, height = image.size
+            width, height = img.size
             width_scale = width / self.width
             height_scale = height / self.height
 
             # Depending on preprocessor, box scaling will be slightly different.
             if self.preprocessor == "fixed_shape_resizer":
-                scale = [self.width / width, self.height / height]
-                image = image.resize((self.width, self.height), resample=Image.BILINEAR)
-                return image, scale
+                scaling = [self.width / width, self.height / height]
+                img = img.resize((self.width, self.height), resample=Image.BILINEAR)
+                return img, scaling
             elif self.preprocessor == "keep_aspect_ratio_resizer":
-                scale = 1.0 / max(width_scale, height_scale)
-                image = image.resize((round(width * scale), round(height * scale)), resample=Image.BILINEAR)
+                scaling = 1.0 / max(width_scale, height_scale)
+                img = img.resize((round(width * scaling), round(height * scaling)), resample=Image.BILINEAR)
                 pad = Image.new("RGB", (self.width, self.height))
                 pad.paste(pad_color, [0, 0, self.width, self.height])
-                pad.paste(image)
-                return pad, scale
+                pad.paste(img)
+                return pad, scaling
 
-        scale = None
         image = Image.open(image_path)
         image = image.convert(mode='RGB')
         if self.preprocessor == "fixed_shape_resizer" or self.preprocessor == "keep_aspect_ratio_resizer":
-            #Resize & Pad with ImageNet mean values and keep as [0,255] Normalization
+            # Resize & Pad with ImageNet mean values and keep as [0,255] Normalization
             image, scale = resize_pad(image, (124, 116, 104))
             image = np.asarray(image, dtype=self.dtype)
         else:
@@ -151,14 +150,14 @@ class ImageBatcher:
             sys.exit(1)
         if self.format == "NCHW":
             image = np.transpose(image, (2, 0, 1))
-        return image/255., scale
+        return image / 255., scale
 
     def get_batch(self):
         """
         Retrieve the batches. This is a generator object, so you can use it within a loop as:
         for batch, images in batcher.get_batch():
            ...
-        Or outside of a batch with the next() function.
+        Or outside a batch with the next() function.
         :return: A generator yielding three items per iteration: a numpy array holding a batch of images, the list of
         paths to the images loaded within this batch, and the list of resize scales for each image in the batch.
         """

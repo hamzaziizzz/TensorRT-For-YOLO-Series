@@ -1,18 +1,18 @@
+import argparse
+import logging
 import os
 import sys
-import logging
-import argparse
 
 import numpy as np
-import tensorrt as trt
 import pycuda.driver as cuda
-import pycuda.autoinit
+import tensorrt as trt
 
 from image_batch import ImageBatcher
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("EngineBuilder").setLevel(logging.INFO)
 log = logging.getLogger("EngineBuilder")
+
 
 class EngineCalibrator(trt.IInt8EntropyCalibrator2):
     """
@@ -50,11 +50,10 @@ class EngineCalibrator(trt.IInt8EntropyCalibrator2):
             return self.image_batcher.batch_size
         return 1
 
-    def get_batch(self, names):
+    def get_batch(self):
         """
         Overrides from trt.IInt8EntropyCalibrator2.
         Get the next batch to use for calibration, as a list of device memory pointers.
-        :param names: The names of the inputs, if useful to define the order of inputs.
         :return: A list of int-casted memory pointers.
         """
         if not self.image_batcher:
@@ -89,10 +88,12 @@ class EngineCalibrator(trt.IInt8EntropyCalibrator2):
             log.info("Writing calibration cache data to: {}".format(self.cache_file))
             f.write(cache)
 
+
 class EngineBuilder:
     """
     Parses an ONNX graph and builds a TensorRT engine from it.
     """
+
     def __init__(self, verbose=False, workspace=8):
         """
         :param verbose: If enabled, a higher verbosity level will be set on the TensorRT logger.
@@ -117,6 +118,10 @@ class EngineBuilder:
         """
         Parse the ONNX graph and create the corresponding TensorRT network definition.
         :param onnx_path: The path to the ONNX graph to load.
+        :param end2end: export the engine include nms plugin
+        :param conf_thres: The conf threshold for the nms
+        :param iou_thres: The iou threshold for the nms
+        :param max_det: The total num for results
         """
         v8 = kwargs['v8']
         network_flags = (1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
@@ -136,9 +141,9 @@ class EngineBuilder:
         outputs = [self.network.get_output(i) for i in range(self.network.num_outputs)]
 
         print("Network Description")
-        for input in inputs:
-            self.batch_size = input.shape[0]
-            print("Input '{}' with shape {} and dtype {}".format(input.name, input.shape, input.dtype))
+        for program_input in inputs:
+            self.batch_size = program_input.shape[0]
+            print("Input '{}' with shape {} and dtype {}".format(program_input.name, program_input.shape, program_input.dtype))
         for output in outputs:
             print("Output '{}' with shape {} and dtype {}".format(output.name, output.shape, output.dtype))
         assert self.batch_size > 0
@@ -147,16 +152,16 @@ class EngineBuilder:
         if end2end:
             previous_output = self.network.get_output(0)
             self.network.unmark_output(previous_output)
-            if not v8: 
+            if not v8:
                 # output [1, 8400, 85]
                 # slice boxes, obj_score, class_scores
-                strides = trt.Dims([1,1,1])
-                starts = trt.Dims([0,0,0])
+                strides = trt.Dims([1, 1, 1])
+                starts = trt.Dims([0, 0, 0])
                 bs, num_boxes, temp = previous_output.shape
                 shapes = trt.Dims([bs, num_boxes, 4])
                 # [0, 0, 0] [1, 8400, 4] [1, 1, 1]
                 boxes = self.network.add_slice(previous_output, starts, shapes, strides)
-                num_classes = temp -5 
+                num_classes = temp - 5
                 starts[2] = 4
                 shapes[2] = 1
                 # [0, 0, 4] [1, 8400, 1] [1, 1, 1]
@@ -168,16 +173,16 @@ class EngineBuilder:
                 # scores = obj_score * class_scores => [bs, num_boxes, nc]
                 scores = self.network.add_elementwise(obj_score.get_output(0), scores.get_output(0), trt.ElementWiseOperation.PROD)
             else:
-                strides = trt.Dims([1,1,1])
-                starts = trt.Dims([0,0,0])
+                strides = trt.Dims([1, 1, 1])
+                starts = trt.Dims([0, 0, 0])
                 previous_output = self.network.add_shuffle(previous_output)
-                previous_output.second_transpose    = (0, 2, 1)
+                previous_output.second_transpose = (0, 2, 1)
                 print(previous_output.get_output(0).shape)
                 bs, num_boxes, temp = previous_output.get_output(0).shape
                 shapes = trt.Dims([bs, num_boxes, 4])
                 # [0, 0, 0] [1, 8400, 4] [1, 1, 1]
                 boxes = self.network.add_slice(previous_output.get_output(0), starts, shapes, strides)
-                num_classes = temp -4 
+                num_classes = temp - 4
                 starts[2] = 4
                 shapes[2] = num_classes
                 # [0, 0, 4] [1, 8400, 80] [1, 1, 1]
@@ -192,18 +197,14 @@ class EngineBuilder:
             "box_coding": 1,
             '''
             registry = trt.get_plugin_registry()
-            assert(registry)
+            assert registry
             creator = registry.get_plugin_creator("EfficientNMS_TRT", "1")
-            assert(creator)
-            fc = []
-            fc.append(trt.PluginField("background_class", np.array([-1], dtype=np.int32), trt.PluginFieldType.INT32))
-            fc.append(trt.PluginField("max_output_boxes", np.array([max_det], dtype=np.int32), trt.PluginFieldType.INT32))
-            fc.append(trt.PluginField("score_threshold", np.array([conf_thres], dtype=np.float32), trt.PluginFieldType.FLOAT32))
-            fc.append(trt.PluginField("iou_threshold", np.array([iou_thres], dtype=np.float32), trt.PluginFieldType.FLOAT32))
-            fc.append(trt.PluginField("box_coding", np.array([1], dtype=np.int32), trt.PluginFieldType.INT32))
-            fc.append(trt.PluginField("score_activation", np.array([0], dtype=np.int32), trt.PluginFieldType.INT32))
-            
-            fc = trt.PluginFieldCollection(fc) 
+            assert creator
+            fc = [trt.PluginField("background_class", np.array([-1], dtype=np.int32), trt.PluginFieldType.INT32), trt.PluginField("max_output_boxes", np.array([max_det], dtype=np.int32), trt.PluginFieldType.INT32),
+                  trt.PluginField("score_threshold", np.array([conf_thres], dtype=np.float32), trt.PluginFieldType.FLOAT32), trt.PluginField("iou_threshold", np.array([iou_thres], dtype=np.float32), trt.PluginFieldType.FLOAT32),
+                  trt.PluginField("box_coding", np.array([1], dtype=np.int32), trt.PluginFieldType.INT32), trt.PluginField("score_activation", np.array([0], dtype=np.int32), trt.PluginFieldType.INT32)]
+
+            fc = trt.PluginFieldCollection(fc)
             nms_layer = creator.create_plugin("nms_layer", fc)
 
             layer = self.network.add_plugin_v2([boxes.get_output(0), scores.get_output(0)], nms_layer)
@@ -213,7 +214,6 @@ class EngineBuilder:
             layer.get_output(3).name = "classes"
             for i in range(4):
                 self.network.mark_output(layer.get_output(i))
-
 
     def create_engine(self, engine_path, precision, calib_input=None, calib_cache=None, calib_num_images=5000,
                       calib_batch_size=8):
@@ -262,11 +262,13 @@ class EngineBuilder:
             print("Serializing engine to file: {:}".format(engine_path))
             f.write(engine)  # .serialize()
 
-def main(args):
-    builder = EngineBuilder(args.verbose, args.workspace)
-    builder.create_network(args.onnx, args.end2end, args.conf_thres, args.iou_thres, args.max_det, v8=args.v8)
-    builder.create_engine(args.engine, args.precision, args.calib_input, args.calib_cache, args.calib_num_images,
-                          args.calib_batch_size)
+
+def main(arguments):
+    builder = EngineBuilder(arguments.verbose, arguments.workspace)
+    builder.create_network(arguments.onnx, arguments.end2end, arguments.conf_thres, arguments.iou_thres, arguments.max_det, v8=arguments.v8)
+    builder.create_engine(arguments.engine, arguments.precision, arguments.calib_input, arguments.calib_cache, arguments.calib_num_images,
+                          arguments.calib_batch_size)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -304,7 +306,5 @@ if __name__ == "__main__":
         parser.print_help()
         log.error("When building in int8 precision, --calib_input or an existing --calib_cache file is required")
         sys.exit(1)
-    
+
     main(args)
-
-
