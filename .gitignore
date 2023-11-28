@@ -95,6 +95,7 @@ __pycache__/
 *.so
 
 # Distribution / packaging
+build/
 develop-eggs/
 dist/
 downloads/
@@ -510,7 +511,7 @@ MigrationBackup/
 FodyWeavers.xsd
 
 # VS Code files for those working on multiple tools
-.vscode/*
+.vscode/
 
 # Local History for Visual Studio Code
 .history/
