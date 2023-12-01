@@ -137,7 +137,7 @@ cuda.Device(0).make_context()
 
 ## Batch Inference
 
-Add the following code to `utils/utils.py` after **line 102**:
+Add the following code to `utils/utils.py` after **line 102** (*i.e., after `detect_video()` function*):
 
 ```python
 def batch_mobile_detection(self, batch_of_frames, conf=0.5, end2end=True):
