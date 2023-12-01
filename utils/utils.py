@@ -30,6 +30,10 @@ class BaseEngine(object):
         self.imgsz = engine.get_binding_shape(0)[2:]  # get the read shape of model, in case user input it wrong
         self.context = engine.create_execution_context()
         self.inputs, self.outputs, self.bindings = [], [], []
+
+        # cuda.init()
+        # cuda.Device(0).make_context()
+        
         self.stream = cuda.Stream()
         for binding in engine:
             size = trt.volume(engine.get_binding_shape(binding))
