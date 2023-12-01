@@ -128,6 +128,13 @@ python trt.py -e yolov8x.trt  -i src/1.jpg -o yolov8n-1.jpg --end2end
 python trt.py -e yolov8x.trt  -i src/video1.mp4 -o reaults.avi --end2end
 ```
 
+***Note: If getting `pycuda._driver.LogicError: explicit_context_dependent failed: invalid device context - no currently active context?`, then add the following lines to `utils/utils.py` after **line 32**:***
+
+```python
+cuda.init()
+cuda.Device(0).make_context()
+```
+
 ## Batch Inference
 
 Add the following code to `utils/utils.py` after **line 102**:
