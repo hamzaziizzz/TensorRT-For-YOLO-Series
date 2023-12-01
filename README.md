@@ -1,257 +1,282 @@
-# YOLO Series TensorRT Python/C++ 
-## [简体中文](README_CN.md)
+# Optimizing YOLOv8 with TensorRT
 
-## Support
-[YOLOv8](https://v8docs.ultralytics.com/)、[YOLOv7](https://github.com/WongKinYiu/yolov7)、[YOLOv6](https://github.com/meituan/YOLOv6)、 [YOLOX](https://github.com/Megvii-BaseDetection/YOLOX)、 [YOLOV5](https://github.com/ultralytics/yolov5)、[YOLOv3](https://github.com/ultralytics/yolov3)
+## Clone the repository
 
-- [x] YOLOv8
-- [x] YOLOv7
-- [x] YOLOv6
-- [x] YOLOX
-- [x] YOLOv5
-- [x] YOLOv3 
-
-## Update 
-- 2023.8.15 Support [cuda-python](https://github.com/Linaom1214/TensorRT-For-YOLO-Series/tree/cuda-python)
-- 2023.5.12 Update
-- 2023.1.7 support YOLOv8
-- 2022.11.29 fix some bug thanks @[JiaPai12138](https://github.com/JiaPai12138)
-- 2022.8.13 rename reop、 public new version、 **C++ for end2end**
-- 2022.8.11 nms plugin support ==> Now you can set --end2end flag while use `export.py` get a engine file  
-- 2022.7.8 support YOLOv7 
-- 2022.7.3 support TRT int8  post-training quantization 
-
-##  Prepare TRT Env 
-`Install via Python`
+```git
+git clone https://github.com/Linaom1214/TensorRT-For-YOLO-Series.git YOLOv8-TensorRT
 ```
-pip install --upgrade setuptools pip --user
-pip install nvidia-pyindex
-pip install --upgrade nvidia-tensorrt
-pip install pycuda
-pip install cuda-python
-```
-`Install via  C++`
 
-[By Docker](https://github.com/NVIDIA/TensorRT/blob/main/docker/ubuntu-20.04.Dockerfile)
+## Create requirements.txt
 
-## Try YOLOv8
-### Install && Download [Weights](https://github.com/ultralytics/assets/)
-```shell
-pip install ultralytics
+`Copy + Paste` the following code into a new file called `requirements.txt`:
+
+```txt
+fastapi
+uvicorn
+pycuda
+cuda-python
+numpy~=1.22.4
+opencv-python~=4.5.5.64
+Pillow~=10.1.0
+matplotlib~=3.7.4
 ```
-### Export ONNX
-```Python
+
+## Create Dockerfile
+
+`Copy + Paste` the following code into a new file called `Dockerfile`:
+
+```dockerfile
+# syntax=docker/dockerfile:1
+
+# Step 1 - Select base docker image
+# FROM python:3.8-slim-buster
+FROM nvcr.io/nvidia/pytorch:22.11-py3
+
+# Step 2 - Upgrade pip
+RUN python3 -m pip install --upgrade pip --no-cache-dir
+RUN pip3 install --upgrade setuptools
+RUN pip3 install --upgrade wheel
+RUN pip3 install ultralytics
+RUN pip3 install install --upgrade nvidia-tensorrt
+RUN pip3 uninstall opencv -y
+
+# Step 3 - Set timezone, for updating system in subsequent steps
+#https://grigorkh.medium.com/fix-tzdata-hangs-docker-image-build-cdb52cc3360d
+ENV TZ=Asia/Kolkata
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# Step 4 - Change work directory in docker image
+WORKDIR /YOLOv8-TensorRT
+
+# Step 5 - Upgrade and install additional libraries to work on videos
+RUN apt update -y && apt upgrade -y
+RUN apt install ffmpeg libsm6 libxext6 cmake build-essential -y
+
+# Step 6 - Copy and install project requirements
+COPY requirements.txt requirements.txt
+RUN pip3 install -r requirements.txt
+
+# Step 7 - Uncomment following line if we want to copy project contents to docker image
+#COPY . .
+
+# Step 8 - Give starting point of project
+#CMD ["python3", "src/main.py"]
+# For just starting the container (i.e., we will have to manually execute the program from inside the container), uncomment next line
+CMD ["sh"]
+```
+
+## Build Docker Image
+
+```docker
+# Already existing image name is "yolov8-tensorrt"
+docker build -t <image-name> .
+```
+
+For example,
+
+```docker
+docker build -t yolov8-tensorrt .
+```
+
+## Run Docker Image
+
+```docker
+# Already existing container name is "yolov8-tensorrt-container"
+docker run -p <port>:6969 --gpus device=<gpu_id> --init -it --entrypoint sh -v $(pwd):/YOLOv8-TensorRT --rm --name <container_name> <image_name>
+```
+
+For example,
+
+```docker
+docker run -p 6969:6969 --gpus device=0 --init -it --entrypoint sh -v $(pwd):/YOLOv8-TensorRT --rm --name yolov8-tensorrt-container yolov8-tensorrt
+```
+
+## Export ONNX
+
+Copy + Paste the following code into a new file called `build_onnx.py`:
+
+```python
 from ultralytics import YOLO
 
-model = YOLO("yolov8s.pt")
+model = YOLO("yolov8x.pt")
 model.fuse()  
-model.info(verbose=False)  # Print model information
-model.export(format='onnx')  # TODO: 
-```
-### Generate TRT File 
-```shell
-python export.py -o yolov8n.onnx -e yolov8n.trt --end2end --v8 --fp32
-```
-### Inference 
-```shell
-python trt.py -e yolov8n.trt  -i src/1.jpg -o yolov8n-1.jpg --end2end 
+model.info(verbose=True)  # Print model information
+model.export(format='onnx')  # Export to ONNX
 ```
 
-## Python Demo
-<details><summary> <b>Expand</b> </summary>
+Run the following command:
 
-1. [YOLOv5](#YOLOv5)
-2. [YOLOx](#YOLOX)
-3. [YOLOv6](#YOLOv6)
-4. [YOLOv7](#YOLOv7)
+```bash
+python3 build_onnx.py
+```
 
+## Generate TRT File
 
-## YOLOv5 <span id="YOLOv5"><span>
+Run the following command:
 
+```bash
+python export.py -o yolov8x.onnx -e yolov8x.trt --end2end --v8
+```
+
+### Inference
+
+```bash
+# For image
+python trt.py -e yolov8x.trt  -i src/1.jpg -o yolov8n-1.jpg --end2end
+
+# For video
+python trt.py -e yolov8x.trt  -i src/video1.mp4 -o reaults.avi --end2end
+```
+
+## Batch Inference
+
+Add the following code to `utils/utils.py` after **line 102**:
 
 ```python
-!git clone https://github.com/ultralytics/yolov5.git
+def batch_mobile_detection(self, batch_of_frames, conf=0.5, end2end=True):
+        batch_results = []
+        for frame in batch_of_frames:
+            blob, ratio = preproc(frame, self.imgsz, self.mean, self.std)
+            data = self.infer(blob)
+            if end2end:
+                num, final_boxes, final_scores, final_cls_inds = data
+                final_boxes = np.reshape(final_boxes / ratio, (-1, 4))
+                dets = np.concatenate([final_boxes[:num[0]], np.array(final_scores)[:num[0]].reshape(-1, 1), np.array(final_cls_inds)[:num[0]].reshape(-1, 1)], axis=-1)
+            else:
+                predictions = np.reshape(data, (1, -1, int(5 + self.n_classes)))[0]
+                dets = self.postprocess(predictions, ratio)
+
+            mobile_phone_locations = []
+            if dets is not None:
+                for det in dets:
+                    x1, y1, x2, y2 = det[:4]
+                    confidence = det[4]
+                    cls_id = int(det[5])
+                    if cls_id == 67 and confidence >= conf:
+                        mobile_phone_locations.append([x1, y1, x2, y2])
+
+            batch_results.append(mobile_phone_locations)
+
+        return batch_results
 ```
+
+## Build API
+
+Copy + Paste the following code into a new file called `api.py`:
 
 ```python
-!wget https://github.com/ultralytics/yolov5/releases/download/v6.1/yolov5n.pt
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from typing import List
+from utils.utils import BaseEngine
+import numpy as np
+import base64
+import cv2
+
+app = FastAPI()
+
+# Load the YOLOv8 Mobile Detection Model
+engine_path = "yolov8x.trt"  # Update with the actual path
+yolo_engine = BaseEngine(engine_path)
+
+
+class BatchRequest(BaseModel):
+    frames: List[str]  # List of base64-encoded JPEG images
+
+
+@app.post("/detect_batch/")
+async def detect_batch(request: BatchRequest):
+    try:
+        # Decode base64 and convert to NumPy array
+        batch_of_frames = [cv2.imdecode(np.frombuffer(base64.b64decode(frame), dtype=np.uint8), cv2.IMREAD_COLOR) for frame in request.frames]
+
+        # Perform batch detection
+        batch_results = yolo_engine.batch_mobile_detection(batch_of_frames)
+
+        return JSONResponse(content=batch_results, status_code=200)
+
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=6969)
 ```
 
+## Run API
+
+```bash
+python3 api.py
+```
+
+## Test API
+
+Open a new terminal and `copy + paste` the following code into a new file called `test_api.py`:
 
 ```python
-!python yolov5/export.py --weights yolov5n.pt --include onnx --simplify --inplace 
+import cv2
+import requests
+import numpy as np
+import base64
+
+# URL of the FastAPI endpoint
+api_url = "http://192.168.12.1:6969/detect_batch/"
+
+# Open a connection to the webcam (0 represents the default camera)
+cap = cv2.VideoCapture("rtsp://grilsquad:grilsquad@192.168.18.93:554/stream1")
+
+# Check if the webcam is opened successfully
+if not cap.isOpened():
+    print("Error: Could not open webcam.")
+    exit()
+
+try:
+    batch_size = 32
+    frames_batch = []
+
+    while True:
+        # Read a frame from the webcam
+        ret, frame = cap.read()
+        if not ret:
+            print("Error: Failed to read frame from the webcam.")
+            break
+
+        # encode each frame in JPEG format
+        _, buffer = cv2.imencode(".jpg", frame)
+        # get base64 formatted data
+        data = base64.b64encode(buffer).decode("ascii")
+        frames_batch.append(data)
+
+        # If the batch size is reached, send the batch to the FastAPI endpoint
+        if len(frames_batch) == batch_size:
+            # Prepare the JSON payload
+            payload = {"frames": frames_batch}
+
+            # Send a POST request to the FastAPI endpoint
+            response = requests.post(api_url, json=payload)
+
+            # Check the response
+            if response.status_code == 200:
+                result = response.json()
+                print(result)
+            else:
+                print(f"Error: {response.status_code} \n {response.text}")
+
+            # Reset the frames batch
+            frames_batch = []
+
+        # Display the frame
+        # cv2.imshow("Webcam", frame)
+
+        # Break the loop if 'q' is pressed
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+finally:
+    # Release the webcam and close the OpenCV window
+    cap.release()
+    cv2.destroyAllWindows()
 ```
-
-### include  NMS Plugin
-
-
-```python
-!python export.py -o yolov5n.onnx -e yolov5n.trt --end2end
-```
-
-
-```python
-!python trt.py -e yolov5n.trt  -i src/1.jpg -o yolov5n-1.jpg --end2end 
-```
-
-###  exclude NMS Plugin
-
-
-```python
-!python export.py -o yolov5n.onnx -e yolov5n.trt 
-```
-
-
-```python
-!python trt.py -e yolov5n.trt  -i src/1.jpg -o yolov5n-1.jpg 
-```
-
-## YOLOX <span id="YOLOX"><span>
-
-
-```python
-!git clone https://github.com/Megvii-BaseDetection/YOLOX.git
-```
-
-
-```python
-!wget https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_s.pth
-```
-
-
-```python
-!cd YOLOX && pip3 install -v -e . --user
-```
-
-
-```python
-!cd YOLOX && python tools/export_onnx.py --output-name ../yolox_s.onnx -n yolox-s -c ../yolox_s.pth --decode_in_inference
-```
-
-### include  NMS Plugin
-
-
-```python
-!python export.py -o yolox_s.onnx -e yolox_s.trt --end2end
-```
-
-
-```python
-!python trt.py -e yolox_s.trt  -i src/1.jpg -o yolox-1.jpg --end2end 
-```
-
-###  exclude NMS Plugin
-
-
-```python
-!python export.py -o yolox_s.onnx -e yolox_s.trt 
-```
-
-
-```python
-!python trt.py -e yolox_s.trt  -i src/1.jpg -o yolox-1.jpg 
-```
-
-## YOLOv6 <span id="YOLOv6"><span>
-
-
-```python
-!wget https://github.com/meituan/YOLOv6/releases/download/0.1.0/yolov6s.onnx
-```
-
-### include  NMS Plugin
-
-
-```python
-!python export.py -o yolov6s.onnx -e yolov6s.trt --end2end
-```
-
-
-```python
-!python trt.py -e yolov6s.trt  -i src/1.jpg -o yolov6s-1.jpg --end2end
-```
-
-###  exclude NMS Plugin
-
-
-```python
-!python export.py -o yolov6s.onnx -e yolov6s.trt 
-```
-
-
-```python
-!python trt.py -e yolov6s.trt  -i src/1.jpg -o yolov6s-1.jpg 
-```
-
-## YOLOv7 <span id="YOLOv7"><span>
-
-
-```python
-!git clone https://github.com/WongKinYiu/yolov7.git
-```
-
-
-```python
-!wget https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7-tiny.pt
-```
-
-
-```python
-!pip install -r yolov7/requirements.txt
-```
-
-
-```python
-!python yolov7/export.py --weights yolov7-tiny.pt --grid  --simplify
-```
-
-### include  NMS Plugin
-
-
-```python
-!python export.py -o yolov7-tiny.onnx -e yolov7-tiny.trt --end2end
-```
-
-
-```python
-!python trt.py -e yolov7-tiny.trt  -i src/1.jpg -o yolov7-tiny-1.jpg --end2end
-```
-
-###  exclude NMS Plugin
-
-
-```python
-!python export.py -o yolov7-tiny.onnx -e yolov7-tiny-norm.trt
-```
-
-
-```python
-!python trt.py -e yolov7-tiny-norm.trt  -i src/1.jpg -o yolov7-tiny-norm-1.jpg
-```
-</details>
-
-## C++ Demo
-
-support **NMS plugin**
-show in [C++ Demo](cpp/README.MD)
-
-
-## Citing 
-
-If you use this repo in your publication, please cite it by using the following BibTeX entry.
-
-```bibtex
-@Misc{yolotrt2022,
-  author =       {Jian Lin},
-  title =        {YOLOTRT: tensorrt for yolo series},
-  howpublished = {\url{[https://github.com/Linaom1214/TensorRT-For-YOLO-Series]}},
-  year =         {2022}
-}
-```
-
-## Sponsor
-
-Buy me a cup of coffee
-
-![](src/Sponsor.png)
-
