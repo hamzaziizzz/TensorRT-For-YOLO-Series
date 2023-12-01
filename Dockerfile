@@ -6,6 +6,11 @@ FROM nvcr.io/nvidia/pytorch:22.11-py3
 
 # Step 2 - Upgrade pip
 RUN python3 -m pip install --upgrade pip --no-cache-dir
+RUN pip3 install --upgrade setuptools
+RUN pip3 install --upgrade wheel
+RUN pip3 install ultralytics
+RUN pip3 install install --upgrade nvidia-tensorrt
+RUN pip3 uninstall opencv -y
 
 # Step 3 - Set timezone, for updating system in subsequent steps
 #https://grigorkh.medium.com/fix-tzdata-hangs-docker-image-build-cdb52cc3360d
@@ -13,11 +18,11 @@ ENV TZ=Asia/Kolkata
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # Step 4 - Change work directory in docker image
-WORKDIR /TensorRT-for-YOLOv8
+WORKDIR /YOLOv8-TensorRT
 
 # Step 5 - Upgrade and install additional libraries to work on videos
 RUN apt update -y && apt upgrade -y
-RUN apt install ffmpeg libsm6 libxext6  -y
+RUN apt install ffmpeg libsm6 libxext6 cmake build-essential -y
 
 # Step 6 - Copy and install project requirements
 COPY requirements.txt requirements.txt
